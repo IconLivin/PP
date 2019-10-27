@@ -1,107 +1,65 @@
-#include <iostream> 
-#include <ctime>  
-#include <mpi.h>
+#include "mpi.h"
+#include <iostream>
+#include <ctime>
+#include <fstream>
 
-using namespace::std;
+using namespace std;
 
-int  curr_rank_proc; 
+int  curr_rank_proc;
 int  num_of_procs;
 double  time_seq_work_alg = 0;
 double  time_pp_work_alg = 0;
 
+double* Create_and_Init_Vector(int size) {
+	double* vec = new double[size];
+	srand(time(NULL));
+	for (int i = 0; i < size; i++) {
+		vec[i] = rand() % 1000 + 0.5 * i;
+	}
+	return vec;
+}
 
-
-double** Create_and_init_matr(int size_matr_row, int size_matr_column)
-{
-	if (size_matr_row < 1 || size_matr_column < 1)
-		return NULL;
-
-	double** matr;
-
-
-
-	matr = new double* [size_matr_row]; 
-	for (int i = 0; i < size_matr_row; i++)
-		matr[i] = new double[size_matr_column];
-
-
-	srand((unsigned)time(NULL));
-	if (size_matr_row > 10 || size_matr_column > 10)
-	{
-		for (int i = 0; i < size_matr_row; i++)
-			for (int j = 0; j < size_matr_column; j++)
-				matr[i][j] = (double)(rand() % 100) - 50.0; 
+void Show_Vec(double* vec, int size) {
+	if (size < 100) {
+		cout << "-----------------------------------" << endl;
+		cout << "Vector:" << endl;
+		cout << "-----------------------------------" << endl;
+		for (int i = 0; i < size; i++)
+			cout << vec[i] << endl;
 	}
 	else
 	{
-		for (int i = 0; i < size_matr_row; i++)
-		{
-			cout << "Input double elements of " << i << " string " << endl;
-			for (int j = 0; j < size_matr_column; j++)
-				cin >> matr[i][j];
+		ofstream file("vec.txt");
+		for (int i = 0; i < size; i++) {
+			file << vec[i] << endl;
 		}
+		file.close();
 	}
-	return matr;
 }
 
-
-double* Convert_matrix_to_vector(double** matr, int size_row, int size_column)
-{
-	if (matr != NULL)
-	{
-		double* vec = new double[size_row * size_column];
-		int index_vec = 0;
-		for (int i = 0; i < size_row; i++)
-			for (int j = 0; j < size_column; j++)
-			{
-				vec[index_vec] = matr[i][j];
-				index_vec++;
-			}
-		return vec;
-	}
-	return NULL;
-}
-
-void Show_matr(double** matr, int size_matr_row, int size_matr_column)
-{
-	if (matr != NULL)
-		for (int i = 0; i < size_matr_row; i++)
-		{
-			for (int j = 0; j < size_matr_column; j++)
-				cout << matr[i][j] << " ";
-			cout << endl;
-		}
-}
-int main(int argc, char* argv[])
-{
-	int size_row = 5, size_column = 5;
-	double** test_matr = NULL; 
-	double* matrix_as_vector = NULL;
-
-	double sum_el_seq = 0;
-	double sum_el_pp = 0;
+int main(int argc, char* argv[]) {
+	int size_vec=1000;
+	double* vec = NULL;
+	double average_seq = 0;
+	double average_par = 0;
 
 	double end_time_of_seq_alg = 0;
 	double start_time_of_seq_alg = 0;
 	double end_time_of_pp_alg = 0;
 	double start_time_of_pp_alg = 0;
 
+	double part_sum = 0, temp_sum = 0;
 
-	double partial_summ = 0;
-	int size_el = 1;
-	int size_work_of_proc = 0; 
+	int size_work_of_proc = 0;
 
 	MPI_Status stat;
 
+	MPI_Init(&argc, &argv);
 
-	/* Начало MPI кода */
 
-	MPI_Init(&argc, &argv); 
-							
+	MPI_Comm_size(MPI_COMM_WORLD, &num_of_procs);
 
-	MPI_Comm_size(MPI_COMM_WORLD, &num_of_procs); 
-												  
-	MPI_Comm_rank(MPI_COMM_WORLD, &curr_rank_proc);  
+	MPI_Comm_rank(MPI_COMM_WORLD, &curr_rank_proc);
 
 	if (num_of_procs < 1)
 	{
@@ -109,42 +67,29 @@ int main(int argc, char* argv[])
 		return 0;
 	}
 
-	if (curr_rank_proc == 0)
-	{
-		cout << "Input size of row: " << endl;
-		cin >> size_row;
-		cout << "Input size of column: " << endl;
-		cin >> size_column;
+	if (curr_rank_proc == 0) {
+		cout << "Input size of vector:";
+		cin >> size_vec;
+		vec = Create_and_Init_Vector(size_vec);
 
-		size_el = size_row * size_column;
-		test_matr = Create_and_init_matr(size_row, size_column);
-		matrix_as_vector = Convert_matrix_to_vector(test_matr, size_row, size_column); 
-
-		if (test_matr == NULL || matrix_as_vector == NULL)
+		if (vec == NULL)
 		{
 			cout << "Incorrect input data, try again" << endl;
 			return 0;
 		}
 
-		if (size_row * size_column < 1000)
-		{
-			cout << "Current matrix:" << endl;
-			Show_matr(test_matr, size_row, size_column);
+		Show_Vec(vec, size_vec);
+
+		start_time_of_seq_alg = MPI_Wtime();
+
+		for (int i = 0; i < size_vec; i++) {
+			average_seq += vec[i];
 		}
-		cout << endl;
-
-		/* Подсчет суммы всех элементов матрицы (последовательная версия алгоритма): */
-
-		start_time_of_seq_alg = clock();
-
-		for (int i = 0; i < size_row; i++)
-			for (int j = 0; j < size_column; j++)
-				sum_el_seq += test_matr[i][j];
-
-		end_time_of_seq_alg = clock();
+		average_seq /= size_vec;
+		end_time_of_seq_alg = MPI_Wtime();
 		time_seq_work_alg = end_time_of_seq_alg - start_time_of_seq_alg;
 
-		cout << "Sum of all elements in matrix is  " << sum_el_seq << " " << endl;
+		cout << "Average in sequence algorithm:" << average_seq << endl;
 		cout << "Spent time on the implementation of this algorithm (Sequence version)" << time_seq_work_alg << " ms " << endl;
 		cout << endl;
 		cout << "Num of procs: " << num_of_procs << endl;
@@ -153,34 +98,32 @@ int main(int argc, char* argv[])
 
 		start_time_of_pp_alg = MPI_Wtime();
 
-		size_work_of_proc = size_el / num_of_procs; 
+		size_work_of_proc = size_vec / num_of_procs;
 
+		MPI_Bcast(&size_vec, 1, MPI_INT, 0, MPI_COMM_WORLD);
 		for (int i = 1; i < num_of_procs; i++)
-			MPI_Send(&size_el, 1, MPI_INT, i, 1, MPI_COMM_WORLD);
-
-		for (int i = 1; i < num_of_procs; i++)
-			MPI_Send(matrix_as_vector + size_work_of_proc * (i - 1), size_work_of_proc, MPI_DOUBLE, i, 1, MPI_COMM_WORLD);
+			MPI_Send(vec + size_work_of_proc * (i - 1), size_work_of_proc, MPI_DOUBLE, i, 1, MPI_COMM_WORLD);
 
 		cout << "Process with rang " << curr_rank_proc << " start own job" << endl;
-		
-		for (int i = size_work_of_proc * (num_of_procs - 1); i < size_el; i++)
-			partial_summ += matrix_as_vector[i];
 
-		sum_el_pp = partial_summ;
+		for (int i = size_work_of_proc * (num_of_procs - 1); i < size_vec; i++)
+			temp_sum += vec[i];
 
-		for (int i = 1; i < num_of_procs; i++)
-		{
-			MPI_Recv(&partial_summ, 1, MPI_DOUBLE, i, 1, MPI_COMM_WORLD, &stat);
-			sum_el_pp += partial_summ;
-		}
+		average_par = temp_sum;
+
+		MPI_Reduce(&part_sum, &temp_sum, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+
+		average_par += temp_sum;
+		average_par /= size_vec;
 
 		end_time_of_pp_alg = MPI_Wtime();
 
-		time_pp_work_alg = (end_time_of_pp_alg - start_time_of_pp_alg) * 1000;
-		cout << "Sum of all elements in matrix is (Parallel version): " << sum_el_pp << endl;
+		time_pp_work_alg = end_time_of_pp_alg - start_time_of_pp_alg;
+
+		cout << "Average in parallel algorithm:" << average_par << endl;
 		cout << "Spent time on the implementation of this algorithm (Parallel version)" << time_pp_work_alg << " ms" << endl;
 
-		if (sum_el_pp == sum_el_seq)
+		if (average_par == average_seq)
 			cout << "Results of parallel and sequence versions are identical! " << endl;
 		else
 			cout << "Results of parallel and sequence versions are not identical! " << endl;
@@ -190,30 +133,25 @@ int main(int argc, char* argv[])
 		else
 			cout << "Sequence version faster, then parallel" << endl;
 
-		delete matrix_as_vector;
-		delete[] test_matr;
+		delete[] vec;
 	}
 	else
 	{
-		double* recv_matrix_as_vector;
-
-		MPI_Recv(&size_el, 1, MPI_INT, 0, 1, MPI_COMM_WORLD, &stat);
-
-		size_work_of_proc = size_el / num_of_procs;
-		recv_matrix_as_vector = new double[size_work_of_proc];
-		MPI_Recv(recv_matrix_as_vector, size_work_of_proc, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD, &stat);
+		double* recv_vector;
+		MPI_Bcast(&size_vec, 1, MPI_INT, 0, MPI_COMM_WORLD);
+		size_work_of_proc = size_vec / num_of_procs;
+		recv_vector = new double[size_work_of_proc];
+		MPI_Recv(recv_vector, size_work_of_proc, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD, &stat);
 
 		cout << "Process with rang " << curr_rank_proc << " start own job" << endl;
 
-		for (int i = 0; i < size_work_of_proc; i++)
-			partial_summ += recv_matrix_as_vector[i];
+		for (int i = 0; i < size_work_of_proc; i++) {
+			part_sum += recv_vector[i];
+		}
 
-		MPI_Send(&partial_summ, 1, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD);
-		delete[] recv_matrix_as_vector;
+		MPI_Reduce(&part_sum, &temp_sum, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+		delete[] recv_vector;
 	}
-
 	MPI_Finalize();
-
-	/* Конец MPI кода */
 	return 0;
 }
