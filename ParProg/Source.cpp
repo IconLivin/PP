@@ -1,157 +1,271 @@
-#include "mpi.h"
+#include <mpi.h>
 #include <iostream>
-#include <ctime>
-#include <fstream>
+#include <queue>
 
 using namespace std;
 
-int  curr_rank_proc;
-int  num_of_procs;
-double  time_seq_work_alg = 0;
-double  time_pp_work_alg = 0;
+#define MANAGER 0
+#define PRODUCER 2 
+#define CONSUMER 1
 
-double* Create_and_Init_Vector(int size) {
-	double* vec = new double[size];
-	srand(time(NULL));
-	for (int i = 0; i < size; i++) {
-		vec[i] = rand() % 1000 + 0.5 * i;
-	}
-	return vec;
-}
+struct info
+{
+	int rank;
+	int whatDoYouNeed;
+	int res;
+};
 
-void Show_Vec(double* vec, int size) {
-	if (size < 100) {
-		cout << "-----------------------------------" << endl;
-		cout << "Vector:" << endl;
-		cout << "-----------------------------------" << endl;
-		for (int i = 0; i < size; i++)
-			cout << vec[i] << endl;
+const int PUT_RESOURCE = 1;
+const int GET_RESOURCE = 2;
+const int EXITP = 3;
+const int EXITC = 4;
+int STOP = -1;
+
+
+
+class Consumer {
+
+private:
+	int resources_to_consume; 
+	std::queue<int> resources; 
+	info i1;
+private:
+	void RequestResource() { 
+
+		MPI_Send(&i1, 3, MPI_INT, MANAGER, 0, MPI_COMM_WORLD); 
 	}
-	else
-	{
-		ofstream file("vec.txt");
-		for (int i = 0; i < size; i++) {
-			file << vec[i] << endl;
+	void RecieveResource() { 
+		int resource = 0;
+		MPI_Status status;
+		MPI_Recv(&resource, 1, MPI_INT, MANAGER, 3, MPI_COMM_WORLD, &status);
+		if (resource == -1)
+		{
+			MPI_Finalize();
+			exit(0);
 		}
-		file.close();
+		if (resource != 0)
+		{ 
+			resources.push(resource);
+			cout << "Consumer " << i1.rank << ": i`ve got resource " << resource << endl;
+			resources_to_consume--; 
+		}
 	}
-}
 
-int main(int argc, char* argv[]) {
-	int size_vec=1000;
-	double* vec = NULL;
-	double average_seq = 0;
-	double average_par = 0;
+public:
+	Consumer(int in_rank, int in_resource_num) { 
+		resources_to_consume = in_resource_num; 
+		i1.rank = in_rank; 
+		i1.whatDoYouNeed = GET_RESOURCE;
+	}
+	void Run() {
+		while (resources_to_consume) { 
+			RequestResource(); 
+			RecieveResource();
+		}
+		i1.whatDoYouNeed = EXITC;
+		MPI_Send(&i1, 3, MPI_INT, MANAGER, 0, MPI_COMM_WORLD);
 
-	double end_time_of_seq_alg = 0;
-	double start_time_of_seq_alg = 0;
-	double end_time_of_pp_alg = 0;
-	double start_time_of_pp_alg = 0;
+	}
+};
 
-	double part_sum = 0, temp_sum = 0;
+class Producer {
+private:
+	int resources_to_produce; 
+	std::queue<int> resources;
+	info i2;
+	MPI_Status status;
+private:
+	void SendResourceToManager() { 
+		i2.res = resources.front();
+		int otvet;
+		MPI_Send(&i2, 3, MPI_INT, MANAGER, 0, MPI_COMM_WORLD);
+		
+		MPI_Recv(&otvet, 1, MPI_INT, MANAGER, 1, MPI_COMM_WORLD, &status);
+		if (otvet == -1)
+		{
+			MPI_Finalize();
+			exit(0);
+		}
+		if (otvet == 0) 
+		{
+			cout << "Producer " << i2.rank << ": sending resource " << i2.res << " in buffer" << endl; 
+			resources.pop(); 
+		}
+		else
+		{
+			cout << "Producer " << i2.rank << ": buffer is full. Failed to put the resource " << i2.res << " in buffer" << endl;
+		}
+	}
+	void CreateResource() { 
+		int resource = resources_to_produce + (i2.rank - 1) * 5 + 1;
+		resources.push(resource);
+		resources_to_produce--; 
+	}
+public:
+	Producer(int in_rank, int num) { 
+		i2.rank = in_rank; 
+		resources_to_produce = num;  
+		i2.whatDoYouNeed = PUT_RESOURCE;
 
-	int size_work_of_proc = 0;
+	}
+	void Run()
+	{ //запуск
+		while (resources_to_produce) {
 
-	MPI_Status stat;
+			CreateResource();
+			SendResourceToManager(); 
+		}
+		while (!resources.empty()) { 
+			SendResourceToManager(); 
+		}
+		i2.whatDoYouNeed = EXITP;
+		MPI_Send(&i2, 3, MPI_INT, MANAGER, 0, MPI_COMM_WORLD);
+	}
+};
+
+class Manager { 
+private:
+	int total_resources; 
+
+	int* buffer;
+	int N, p_size, pro, con;
+	MPI_Status status;
+	info i3;
+
+private:
+	void Put(int producer_id, int resource) { 
+		int otvet = 1;
+		for (int i = 0; i < N; i++)
+		{
+			if (buffer[i] == 0) {
+				otvet = 0;
+				buffer[i] = resource;
+				break;
+			}
+
+
+		}
+		if (otvet == 0)
+		{
+			cout << "Manager: producer " << producer_id << " puts resource " << resource << endl; 
+		}
+		MPI_Send(&otvet, 1, MPI_INT, producer_id, 1, MPI_COMM_WORLD); 
+	}
+	void Get(int consumer_id) { 
+		int resource = 0;
+		for (int i = 0; i < N; i++)
+		{
+			if (buffer[i] == 0)
+				resource = 0;
+			else
+			{
+				resource = buffer[i];
+				buffer[i] = 0;
+				break;
+			}
+		}
+
+		if (resource != 0)
+		{
+			cout << "Manager: consumer " << consumer_id << " gets resource " << resource << endl; 
+		}
+		else
+		{
+			if (pro == 0)
+			{
+				for (int i = 1; i < p_size; i++)
+				{
+
+					if (i % 2)
+						MPI_Send(&STOP, 1, MPI_INT, i, 1, MPI_COMM_WORLD);
+					else
+						MPI_Send(&STOP, 1, MPI_INT, i, 3, MPI_COMM_WORLD);
+				}
+			}
+		}
+		MPI_Send(&resource, 1, MPI_INT, consumer_id, 3, MPI_COMM_WORLD);
+	}
+
+public:
+	Manager(int in_total_resources, int proc_size, int p, int c) { 
+		total_resources = in_total_resources;
+		p_size = proc_size;
+		N = total_resources;
+		con = c;
+		pro = p;
+		buffer = new int[total_resources];
+		for (int i = 0; i < total_resources; i++)
+		{
+			buffer[i] = 0;
+		}
+	}
+
+	void Run() {
+		while (true) {
+			MPI_Recv(&i3, 3, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
+			if (i3.whatDoYouNeed == EXITP)
+			{
+				pro--;
+			}
+			if (i3.whatDoYouNeed == EXITC)
+			{
+				con--;
+				if (con == 0)
+				{
+					for (int i = 1; i < p_size; i++)
+					{
+						if (i % 2)
+							MPI_Send(&STOP, 1, MPI_INT, i, 1, MPI_COMM_WORLD);
+						else
+							MPI_Send(&STOP, 1, MPI_INT, i, 3, MPI_COMM_WORLD);
+					}
+					MPI_Finalize();
+					exit(0);
+				}
+			}
+
+			if (i3.whatDoYouNeed == PUT_RESOURCE)
+				Put(i3.rank, i3.res);
+			if (i3.whatDoYouNeed == GET_RESOURCE)
+				Get(i3.rank);
+		}
+	}
+};
+
+int main(int argc, char** argv) {
 
 	MPI_Init(&argc, &argv);
+	MPI_Status status;
 
+	int rank = -1;
+	int process_num = -1;
+	int pro, com;
+	int size = 0;
 
-	MPI_Comm_size(MPI_COMM_WORLD, &num_of_procs);
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank); 
+	MPI_Comm_size(MPI_COMM_WORLD, &process_num); 
 
-	MPI_Comm_rank(MPI_COMM_WORLD, &curr_rank_proc);
+	int a = (process_num - 1);
+	pro = a / 2 + a % 2;
+	com = a / 2 ;
 
-	if (num_of_procs < 1)
-	{
-		cout << "Incorrect number of processes (at least 1 must be)" << endl;
-		return 0;
+	if (rank == 0) { 
+		Manager manager(3, process_num, pro, com);
+		manager.Run(); 
+	}
+	else { 
+		if (rank % 2) { 
+			std::cout << "The process with the rank of " << rank << " is Producer" << std::endl;
+			Producer producer(rank, 5);
+			producer.Run();
+		}
+		else { 
+			std::cout << "The process with the rank of " << rank << " is Consumer" << std::endl;
+			Consumer consumer(rank, 5); 
+			consumer.Run(); 
+		}
 	}
 
-	if (curr_rank_proc == 0) {
-		cout << "Input size of vector:";
-		cin >> size_vec;
-		vec = Create_and_Init_Vector(size_vec);
-
-		if (vec == NULL)
-		{
-			cout << "Incorrect input data, try again" << endl;
-			return 0;
-		}
-
-		Show_Vec(vec, size_vec);
-
-		start_time_of_seq_alg = MPI_Wtime();
-
-		for (int i = 0; i < size_vec; i++) {
-			average_seq += vec[i];
-		}
-		average_seq /= size_vec;
-		end_time_of_seq_alg = MPI_Wtime();
-		time_seq_work_alg = end_time_of_seq_alg - start_time_of_seq_alg;
-
-		cout << "Average in sequence algorithm:" << average_seq << endl;
-		cout << "Spent time on the implementation of this algorithm (Sequence version)" << time_seq_work_alg << " ms " << endl;
-		cout << endl;
-		cout << "Num of procs: " << num_of_procs << endl;
-
-
-
-		start_time_of_pp_alg = MPI_Wtime();
-
-		size_work_of_proc = size_vec / num_of_procs;
-
-		MPI_Bcast(&size_vec, 1, MPI_INT, 0, MPI_COMM_WORLD);
-		for (int i = 1; i < num_of_procs; i++)
-			MPI_Send(vec + size_work_of_proc * (i - 1), size_work_of_proc, MPI_DOUBLE, i, 1, MPI_COMM_WORLD);
-
-		cout << "Process with rang " << curr_rank_proc << " start own job" << endl;
-
-		for (int i = size_work_of_proc * (num_of_procs - 1); i < size_vec; i++)
-			temp_sum += vec[i];
-
-		average_par = temp_sum;
-
-		MPI_Reduce(&part_sum, &temp_sum, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-
-		average_par += temp_sum;
-		average_par /= size_vec;
-
-		end_time_of_pp_alg = MPI_Wtime();
-
-		time_pp_work_alg = end_time_of_pp_alg - start_time_of_pp_alg;
-
-		cout << "Average in parallel algorithm:" << average_par << endl;
-		cout << "Spent time on the implementation of this algorithm (Parallel version)" << time_pp_work_alg << " ms" << endl;
-
-		if (average_par == average_seq)
-			cout << "Results of parallel and sequence versions are identical! " << endl;
-		else
-			cout << "Results of parallel and sequence versions are not identical! " << endl;
-
-		if (time_pp_work_alg <= time_seq_work_alg)
-			cout << "Parallel version faster, then sequence" << endl;
-		else
-			cout << "Sequence version faster, then parallel" << endl;
-
-		delete[] vec;
-	}
-	else
-	{
-		double* recv_vector;
-		MPI_Bcast(&size_vec, 1, MPI_INT, 0, MPI_COMM_WORLD);
-		size_work_of_proc = size_vec / num_of_procs;
-		recv_vector = new double[size_work_of_proc];
-		MPI_Recv(recv_vector, size_work_of_proc, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD, &stat);
-
-		cout << "Process with rang " << curr_rank_proc << " start own job" << endl;
-
-		for (int i = 0; i < size_work_of_proc; i++) {
-			part_sum += recv_vector[i];
-		}
-
-		MPI_Reduce(&part_sum, &temp_sum, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-		delete[] recv_vector;
-	}
 	MPI_Finalize();
 	return 0;
 }
