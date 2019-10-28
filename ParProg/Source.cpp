@@ -40,6 +40,7 @@ private:
 		MPI_Recv(&resource, 1, MPI_INT, MANAGER, 3, MPI_COMM_WORLD, &status);
 		if (resource == -1)
 		{
+			cout << "Exit!" << endl;
 			MPI_Finalize();
 			exit(0);
 		}
@@ -83,6 +84,7 @@ private:
 		MPI_Recv(&otvet, 1, MPI_INT, MANAGER, 1, MPI_COMM_WORLD, &status);
 		if (otvet == -1)
 		{
+			cout << "Exit!" << endl;
 			MPI_Finalize();
 			exit(0);
 		}
@@ -109,7 +111,7 @@ public:
 
 	}
 	void Run()
-	{ //запуск
+	{ 
 		while (resources_to_produce) {
 
 			CreateResource();
@@ -180,6 +182,7 @@ private:
 						MPI_Send(&STOP, 1, MPI_INT, i, 1, MPI_COMM_WORLD);
 					else
 						MPI_Send(&STOP, 1, MPI_INT, i, 3, MPI_COMM_WORLD);
+					
 				}
 			}
 		}
@@ -219,6 +222,7 @@ public:
 						else
 							MPI_Send(&STOP, 1, MPI_INT, i, 3, MPI_COMM_WORLD);
 					}
+					cout << "Exit!" << endl;
 					MPI_Finalize();
 					exit(0);
 				}
@@ -239,7 +243,7 @@ int main(int argc, char** argv) {
 
 	int rank = -1;
 	int process_num = -1;
-	int pro, com;
+	int pro, con;
 	int size = 0;
 
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank); 
@@ -247,20 +251,20 @@ int main(int argc, char** argv) {
 
 	int a = (process_num - 1);
 	pro = a / 2 + a % 2;
-	com = a / 2 ;
+	con = a / 2 ;
 
 	if (rank == 0) { 
-		Manager manager(3, process_num, pro, com);
+		Manager manager(3, process_num, pro, con);
 		manager.Run(); 
 	}
 	else { 
 		if (rank % 2) { 
-			std::cout << "The process with the rank of " << rank << " is Producer" << std::endl;
+			std::cout << "The process with the rank " << rank << " is Producer" << std::endl;
 			Producer producer(rank, 5);
 			producer.Run();
 		}
 		else { 
-			std::cout << "The process with the rank of " << rank << " is Consumer" << std::endl;
+			std::cout << "The process with the rank " << rank << " is Consumer" << std::endl;
 			Consumer consumer(rank, 5); 
 			consumer.Run(); 
 		}
