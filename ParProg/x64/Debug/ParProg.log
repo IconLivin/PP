@@ -1,0 +1,5 @@
+﻿  Source.cpp
+C:\Users\aaron\OneDrive\Рабочий стол\PP\ParProg\Source.cpp(185,12): warning C4244: аргумент: преобразование "time_t" в "unsigned int", возможна потеря данных
+C:\Users\aaron\OneDrive\Рабочий стол\PP\ParProg\Source.cpp(351,16): warning C4101: resabove: неиспользованная локальная переменная
+C:\Users\aaron\OneDrive\Рабочий стол\PP\ParProg\Source.cpp(383,35): warning C4326: возвращаемый тип "main" должен быть "int", а не "void"
+  ParProg.vcxproj -> C:\Users\aaron\OneDrive\Рабочий стол\PP\x64\Debug\ParProg.exe

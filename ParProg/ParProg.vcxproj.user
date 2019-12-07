@@ -4,4 +4,9 @@
     <LocalDebuggerCommandArguments>-n 4 $(TargetPath)</LocalDebuggerCommandArguments>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <LocalDebuggerCommand>C:\Program Files\Microsoft MPI\Bin\mpiexec.exe</LocalDebuggerCommand>
+    <LocalDebuggerCommandArguments>-n 7</LocalDebuggerCommandArguments>
+    <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+  </PropertyGroup>
 </Project>

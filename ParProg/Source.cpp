@@ -1,275 +1,463 @@
-#include <mpi.h>
+
+#include "mpi.h"
 #include <iostream>
-#include <queue>
+#include "math.h"
+#include <ctime>
 
 using namespace std;
 
-#define MANAGER 0
-#define PRODUCER 2 
-#define CONSUMER 1
+//------ Последовательный алгоритм ------//
+double* MVmul(double* pMatrix, double* pVector, const int& Size) {
+	double* res = new double[Size];
+	for (int i = 0; i < Size; ++i) {
+		res[i] = 0;
+		for (int j = 0; j < Size; j++)
+			res[i] += pMatrix[Size * i + j] * pVector[j];
+	}
+	return res;
+}
+double* VVsub(double* pVectorLeft, double* pVectorRight, const int& Size) {
+	double* res = new double[Size];
+	for (int i = 0; i < Size; ++i) {
+		res[i] = pVectorLeft[i] - pVectorRight[i];
+	}
+	return res;
+}
+double* VVsum(double* pVectorLeft, double* pVectorRight, const int& Size) {
+	double* res = new double[Size];
+	for (int i = 0; i < Size; ++i) {
+		res[i] = pVectorLeft[i] + pVectorRight[i];
+	}
+	return res;
+}
+double ScalMul(double* pVectorLeft, double* pVectorRight, const int& Size) {
+	double res = 0;
+	for (int i = 0; i < Size; ++i) {
+		res += pVectorLeft[i] * pVectorRight[i];
+	}
+	return res;
+}
+double* VDmul(double* pVector, double pDouble, const int& Size) {
+	double* res = new double[Size];
+	for (int i = 0; i < Size; ++i) {
+		res[i] = pVector[i] * pDouble;
+	}
+	return res;
+}
+void ProcessInitializationGradient(double*& pVector, double*& pPrevResult, double*& pResult, double*& pPrevD, double*& pD,
+	double*& pPrevG, double*& pG, int Size) {
+	pPrevResult = new double[Size];
+	pResult = new double[Size];
+	pPrevD = new double[Size];
+	pD = new double[Size];
+	pPrevG = new double[Size];
+	pG = new double[Size];
+	for (int i = 0; i < Size; i++) {
+		pPrevResult[i] = 0;
+		pPrevD[i] = 0;
+		pPrevG[i] = -pVector[i];
+	}
+}
+void SoprGradSeq(double*& pMatrixGrad, double*& pVectorGrad, double*& pPrevResult, double*& pResult, double*& pPrevD, double*& pD,
+	double*& pPrevG, double*& pG, double& s, double eps, int Size) {
+	ProcessInitializationGradient(pVectorGrad, pPrevResult, pResult, pPrevD, pD, pPrevG, pG, Size);
+	int flag = 1;
+	while (flag) {
+		//first
+		double* pLeft = MVmul(pMatrixGrad, pPrevResult, Size);
+		pG = VVsub(pLeft, pVectorGrad, Size);
+		delete pLeft;
+		//second
+		double above = ScalMul(pG, pG, Size);
+		double beyond = ScalMul(pPrevG, pPrevG, Size);
+		double* pRight = VDmul(pPrevD, (double)(above / beyond), Size);
+		pD = VVsub(pRight, pG, Size);
+		delete pRight;
+		//third
+		above = ScalMul(pD, pG, Size);
+		double* beyondr = MVmul(pMatrixGrad, pD, Size);
+		beyond = ScalMul(pD, beyondr, Size);
+		delete beyondr;
+		s = -(double)(above / beyond);
+		//fourth
+		pRight = VDmul(pD, s, Size);
+		pResult = VVsum(pPrevResult, pRight, Size);
+		double sum = 0;
+		for (int i = 0; i < Size; i++)
+			sum += fabs(pResult[i] - pPrevResult[i]);
+		delete pPrevG; delete pPrevD; delete pPrevResult;
+		pPrevG = pG; pPrevD = pD; pPrevResult = pResult;
+		if (sum < eps) flag = 0; 
+	}
+}
 
-struct info
+
+//------ Метод Гаусса ------//
+int* pPivotPos;
+int* pPivotIter;
+void Show(double* pMatrix, double* pVector, int Size)
 {
-	int rank;
-	int whatDoYouNeed;
-	int res;
-};
-
-const int PUT_RESOURCE = 1;
-const int GET_RESOURCE = 2;
-const int EXITP = 3;
-const int EXITC = 4;
-int STOP = -1;
-
-
-
-class Consumer {
-
-private:
-	int resources_to_consume; 
-	std::queue<int> resources; 
-	info i1;
-private:
-	void RequestResource() { 
-
-		MPI_Send(&i1, 3, MPI_INT, MANAGER, 0, MPI_COMM_WORLD); 
-	}
-	void RecieveResource() { 
-		int resource = 0;
-		MPI_Status status;
-		MPI_Recv(&resource, 1, MPI_INT, MANAGER, 3, MPI_COMM_WORLD, &status);
-		if (resource == -1)
+	cout << "\n";
+	for (int i = 0; i < Size; i++)
+	{
+		cout << '|';
+		for (int j = 0; j < Size; j++)
 		{
-			cout << "Exit!" << endl;
-			MPI_Finalize();
-			exit(0);
+			cout << pMatrix[Size * i + j] << " ";
 		}
-		if (resource != 0)
-		{ 
-			resources.push(resource);
-			cout << "Consumer " << i1.rank << ": i`ve got resource " << resource << endl;
-			resources_to_consume--; 
-		}
+		cout << '|';
+		cout << '=';
+		cout << '|' << pVector[i] << '|' << "\n";
 	}
-
-public:
-	Consumer(int in_rank, int in_resource_num) { 
-		resources_to_consume = in_resource_num; 
-		i1.rank = in_rank; 
-		i1.whatDoYouNeed = GET_RESOURCE;
-	}
-	void Run() {
-		while (resources_to_consume) { 
-			RequestResource(); 
-			RecieveResource();
-		}
-		i1.whatDoYouNeed = EXITC;
-		MPI_Send(&i1, 3, MPI_INT, MANAGER, 0, MPI_COMM_WORLD);
-
-	}
-};
-
-class Producer {
-private:
-	int resources_to_produce; 
-	std::queue<int> resources;
-	info i2;
-	MPI_Status status;
-private:
-	void SendResourceToManager() { 
-		i2.res = resources.front();
-		int otvet;
-		MPI_Send(&i2, 3, MPI_INT, MANAGER, 0, MPI_COMM_WORLD);
-		
-		MPI_Recv(&otvet, 1, MPI_INT, MANAGER, 1, MPI_COMM_WORLD, &status);
-		if (otvet == -1)
+}
+int FindPivotRow(double* pMatrix, int Size, int Iter)
+{
+	int PivotRow = -1;
+	double MaxValue = 0;
+	for (int i = 0; i < Size; i++)
+	{
+		if ((pPivotIter[i] == -1) && (fabs(pMatrix[i * Size + Iter]) > MaxValue))
 		{
-			cout << "Exit!" << endl;
-			MPI_Finalize();
-			exit(0);
-		}
-		if (otvet == 0) 
-		{
-			cout << "Producer " << i2.rank << ": sending resource " << i2.res << " in buffer" << endl; 
-			resources.pop(); 
-		}
-		else
-		{
-			cout << "Producer " << i2.rank << ": buffer is full. Failed to put the resource " << i2.res << " in buffer" << endl;
+			PivotRow = i;
+			MaxValue = fabs(pMatrix[i * Size + Iter]);
 		}
 	}
-	void CreateResource() { 
-		int resource = resources_to_produce + (i2.rank - 1) * 5 + 1;
-		resources.push(resource);
-		resources_to_produce--; 
-	}
-public:
-	Producer(int in_rank, int num) { 
-		i2.rank = in_rank; 
-		resources_to_produce = num;  
-		i2.whatDoYouNeed = PUT_RESOURCE;
-
-	}
-	void Run()
-	{ 
-		while (resources_to_produce) {
-
-			CreateResource();
-			SendResourceToManager(); 
-		}
-		while (!resources.empty()) { 
-			SendResourceToManager(); 
-		}
-		i2.whatDoYouNeed = EXITP;
-		MPI_Send(&i2, 3, MPI_INT, MANAGER, 0, MPI_COMM_WORLD);
-	}
-};
-
-class Manager { 
-private:
-	int total_resources; 
-
-	int* buffer;
-	int N, p_size, pro, con;
-	MPI_Status status;
-	info i3;
-
-private:
-	void Put(int producer_id, int resource) { 
-		int otvet = 1;
-		for (int i = 0; i < N; i++)
+	return PivotRow;
+}
+void SerialColumnElimination(double* pMatrix, double* pVector, int Size, int Iter, int PivotRow)
+{
+	double PivotValue, PivotFactor;
+	PivotValue = pMatrix[PivotRow * Size + Iter];
+	for (int i = 0; i < Size; i++)
+	{
+		if (pPivotIter[i] == -1)
 		{
-			if (buffer[i] == 0) {
-				otvet = 0;
-				buffer[i] = resource;
-				break;
-			}
-
-
-		}
-		if (otvet == 0)
-		{
-			cout << "Manager: producer " << producer_id << " puts resource " << resource << endl; 
-		}
-		MPI_Send(&otvet, 1, MPI_INT, producer_id, 1, MPI_COMM_WORLD); 
-	}
-	void Get(int consumer_id) { 
-		int resource = 0;
-		for (int i = 0; i < N; i++)
-		{
-			if (buffer[i] == 0)
-				resource = 0;
-			else
+			PivotFactor = pMatrix[i * Size + Iter] / PivotValue;
+			for (int j = Iter; j < Size; j++)
 			{
-				resource = buffer[i];
-				buffer[i] = 0;
-				break;
+				pMatrix[i * Size + j] -= PivotFactor * pMatrix[PivotRow * Size + j];
 			}
-		}
-
-		if (resource != 0)
-		{
-			cout << "Manager: consumer " << consumer_id << " gets resource " << resource << endl; 
-		}
-		else
-		{
-			if (pro == 0)
-			{
-				for (int i = 1; i < p_size; i++)
-				{
-
-					if (i % 2)
-						MPI_Send(&STOP, 1, MPI_INT, i, 1, MPI_COMM_WORLD);
-					else
-						MPI_Send(&STOP, 1, MPI_INT, i, 3, MPI_COMM_WORLD);
-					
-				}
-			}
-		}
-		MPI_Send(&resource, 1, MPI_INT, consumer_id, 3, MPI_COMM_WORLD);
-	}
-
-public:
-	Manager(int in_total_resources, int proc_size, int p, int c) { 
-		total_resources = in_total_resources;
-		p_size = proc_size;
-		N = total_resources;
-		con = c;
-		pro = p;
-		buffer = new int[total_resources];
-		for (int i = 0; i < total_resources; i++)
-		{
-			buffer[i] = 0;
+			pVector[i] -= PivotFactor * pVector[PivotRow];
 		}
 	}
 
-	void Run() {
-		while (true) {
-			MPI_Recv(&i3, 3, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
-			if (i3.whatDoYouNeed == EXITP)
-			{
-				pro--;
-			}
-			if (i3.whatDoYouNeed == EXITC)
-			{
-				con--;
-				if (con == 0)
-				{
-					for (int i = 1; i < p_size; i++)
-					{
-						if (i % 2)
-							MPI_Send(&STOP, 1, MPI_INT, i, 1, MPI_COMM_WORLD);
-						else
-							MPI_Send(&STOP, 1, MPI_INT, i, 3, MPI_COMM_WORLD);
-					}
-					cout << "Exit!" << endl;
-					MPI_Finalize();
-					exit(0);
-				}
-			}
-
-			if (i3.whatDoYouNeed == PUT_RESOURCE)
-				Put(i3.rank, i3.res);
-			if (i3.whatDoYouNeed == GET_RESOURCE)
-				Get(i3.rank);
+}
+void SerialGaussianElimination(double* pMatrix, double* pVector, int Size)
+{
+	int Iter;
+	int PivotRow;
+	for (Iter = 0; Iter < Size; Iter++)
+	{
+		PivotRow = FindPivotRow(pMatrix, Size, Iter);
+		pPivotPos[Iter] = PivotRow;
+		pPivotIter[PivotRow] = Iter;
+		SerialColumnElimination(pMatrix, pVector, Size, Iter, PivotRow);
+	}
+}
+void SerialBackSubstitution(double* pMatrix, double* pVector, double* pResult, int Size)
+{
+	int RowIndex, Row;
+	for (int i = Size - 1; i >= 0; --i)
+	{
+		RowIndex = pPivotPos[i];
+		pResult[i] = pVector[RowIndex] / pMatrix[Size * RowIndex + i];
+		pMatrix[RowIndex * Size + i] = 1;
+		for (int j = 0; j < i; ++j)
+		{
+			Row = pPivotPos[j];
+			pVector[Row] -= pMatrix[Row * Size + i] * pResult[i];
+			pMatrix[Row * Size + i] = 0;
 		}
 	}
-};
+}
+void SerialResultCalculation(double* pMatrix, double* pVector, double* pResult, int Size)
+{
+	SerialGaussianElimination(pMatrix, pVector, Size);
+	SerialBackSubstitution(pMatrix, pVector, pResult, Size);
+}
 
-int main(int argc, char** argv) {
+//------ Параллельный алгоритм ------//
+void RandomDataInitialization(double*& pMatrixGA, double*& pVectorGA, double*& pMatrixGR, double*& pVectorGR, int& Size)
+{
+	pMatrixGA = new double[Size * Size];
+	pVectorGA = new double[Size];
+	cout << "\nInput matrix:\n";
+	srand(time(0));
+	for (int i = 0; i < Size; i++)
+	{
+		for (int j = 0; j < Size; j++)
+		{
+			pMatrixGA[Size * i + j] = rand() % 100 + 50;
+			pMatrixGA[Size * j + i] = pMatrixGA[Size * i + j];
+			pMatrixGR[Size * i + j] = pMatrixGA[Size * i + j];
+			pMatrixGR[Size * j + i] = pMatrixGA[Size * i + j];
+		}
+		pVectorGA[i] = rand() % 100 + 50;
+		pVectorGR[i] = pVectorGA[i];
+	}
+	pPivotPos = new int[Size];
+	pPivotIter = new int[Size];
+	for (int i = 0; i < Size; ++i)
+	{
+		pPivotPos[i] = 0;
+		pPivotIter[i] = -1;
+	}
 
+}
+void ExactDataInitialization(double*& pVector, double*& pPrevProcResult, double*& pPrevProcD, double*& pPrevProcG,
+	int* pSendInd, int Size, int RowNum, int ProcRank) {
+	pPrevProcResult = new double[RowNum];
+	pPrevProcD = new double[RowNum];
+	pPrevProcG = new double[RowNum];
+	for (int i = 0; i < RowNum; i++) {
+		pPrevProcResult[i] = 0;
+		pPrevProcD[i] = 0;
+		pPrevProcG[i] = -pVector[pSendInd[ProcRank] / Size + i];
+	}
+}
+void ProcessInitialization(double*& pMatrixGA, double*& pVectorGA, double*& pResultGA, double*& pMatrixGR, double*& pVectorGR, double*& pResultGR, double*& pProcRows, double*& pProcResult,
+	int& Size, int& RowNum, int ProcRank, int ProcNum, double*& pPrevProcResult, double*& pPrevProcD, double*& pProcD, double*& pPrevProcG,
+	double*& pProcG, double*& tmpVec, double& eps) {
+	int RestRows; 
+
+	if (ProcRank == 0) {
+		do {
+			cout << "\n\tEnter equations count: ";
+			cin >> Size;
+			if (Size < ProcNum) {
+				cout << "\tCount of equations must be bigger than number of processes! \n ";
+			}
+		} while (Size < ProcNum);
+		cout << "\tEnter a valid error value:"; 
+		cin >> eps;
+	}
+	MPI_Bcast(&Size, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	RestRows = Size;
+	for (int i = 0; i < ProcRank; i++)
+		RestRows = RestRows - RestRows / (ProcNum - i);
+	RowNum = RestRows / (ProcNum - ProcRank);
+
+	pVectorGA = new double[Size];
+	pResultGA = new double[Size];
+	pVectorGR = new double[Size];
+	pResultGR = new double[Size];
+	pProcRows = new double[RowNum * Size];
+	pProcResult = new double[RowNum];
+	pProcD = new double[RowNum];
+	pProcG = new double[RowNum];
+	tmpVec = new double[RowNum];
+	if (ProcRank == 0) {
+		pMatrixGA = new double[Size * Size];
+		pMatrixGR = new double[Size * Size];
+		RandomDataInitialization(pMatrixGA, pVectorGA, pMatrixGR, pVectorGR, Size);
+	}
+}
+void DataDistribution(double*& pMatrix, double*& pProcRows, double*& pVector, double*& pPrevProcResult, double*& pPrevProcD,
+	double*& pPrevProcG, int*& pSendNum, int*& pSendInd, int Size, int RowNum, int ProcRank, int ProcNum) {
+	int RestRows = Size;
+	MPI_Bcast(pVector, Size, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+	pSendInd = new int[ProcNum];
+	pSendNum = new int[ProcNum];
+	RowNum = (Size / ProcNum);
+	pSendNum[0] = RowNum * Size;
+	pSendInd[0] = 0;
+	for (int i = 1; i < ProcNum; i++) {
+		RestRows -= RowNum;
+		RowNum = RestRows / (ProcNum - i);
+		pSendNum[i] = RowNum * Size;
+		pSendInd[i] = pSendInd[i - 1] + pSendNum[i - 1];
+	}
+
+	MPI_Scatterv(pMatrix, pSendNum, pSendInd, MPI_DOUBLE, pProcRows,
+		pSendNum[ProcRank], MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+	ExactDataInitialization(pVector, pPrevProcResult, pPrevProcD, pPrevProcG, pSendInd, Size, RowNum, ProcRank);
+}
+void ReceiveInfoCalculation(int*& pReceiveNum, int*& pReceiveInd, int Size, int ProcNum) {
+	int i;
+	int RestRows = Size; 
+	pReceiveNum = new int[ProcNum];
+	pReceiveInd = new int[ProcNum];
+
+	pReceiveInd[0] = 0;
+	pReceiveNum[0] = Size / ProcNum;
+	for (i = 1; i < ProcNum; i++) {
+		RestRows -= pReceiveNum[i - 1];
+		pReceiveNum[i] = RestRows / (ProcNum - i);
+		pReceiveInd[i] = pReceiveInd[i - 1] + pReceiveNum[i - 1];
+	}
+}
+void ParallelMVmulCalculation(double* pProcRows, double* pVector, double* pProcResult, int Size, int RowNum) {
+	int i, j;
+	for (i = 0; i < RowNum; i++) {
+		pProcResult[i] = 0;
+		for (j = 0; j < Size; j++)
+			pProcResult[i] += pProcRows[i * Size + j] * pVector[j];
+	}
+}
+void ParallelVVsubCalculation(double* pProcLeft, double* pProcRight, double* pProcResult, int Size, int RowNum) {
+	int i;
+	for (i = 0; i < RowNum; i++) {
+		pProcResult[i] = pProcLeft[i] - pProcRight[i];
+	}
+}
+void ParallelVVsumCalculation(double* pProcLeft, double* pProcRight, double* pProcResult, int RowNum) {
+	int i;
+	for (i = 0; i < RowNum; i++) {
+		pProcResult[i] = pProcLeft[i] + pProcRight[i];
+	}
+}
+void ParallelVVmulCalculation(double* pProcLeft, double* pProcRight, double& Result, int RowNum) {
+	int i;
+	double ProcResult = 0;
+	for (i = 0; i < RowNum; i++) {
+		ProcResult += pProcLeft[i] * pProcRight[i];
+	}
+	MPI_Allreduce(&ProcResult, &Result, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+}
+void ParallelDVmulCalculation(double pProcLeft, double*& pProcRight, double*& ProcResult, int RowNum) {
+	int i;
+	for (i = 0; i < RowNum; i++) {
+		ProcResult[i] = pProcLeft * pProcRight[i];
+	}
+}
+void ParallelFirstIter(double*& pProcRows, double*& pVector, double*& pProcG, double*& pPrevProcResult, double*& tmpVec,
+	int*& pReceiveNum, int*& pReceiveInd, int*& pSendInd, int ProcRank, int RowNum, int Size) {
+	double* pPrevProcResultFull = new double[Size];
+	MPI_Allgatherv(pPrevProcResult, pReceiveNum[ProcRank], MPI_DOUBLE, pPrevProcResultFull,
+		pReceiveNum, pReceiveInd, MPI_DOUBLE, MPI_COMM_WORLD);
+	ParallelMVmulCalculation(pProcRows, pPrevProcResultFull, tmpVec, Size, RowNum);
+	ParallelVVsubCalculation(tmpVec, pVector + pSendInd[ProcRank] / Size, pProcG, Size, RowNum);
+}
+void ParallelSecondIter(double*& pProcG, double*& pPrevProcG, double*& pPrevProcResult, double*& pProcD, double*& pPrevProcD, double*& tmpVec,
+	int*& pReceiveNum, int*& pReceiveInd, int*& pSendInd, int ProcRank, int RowNum, int Size) {
+	double* parts = new double[2];
+	ParallelVVmulCalculation(pProcG, pProcG, parts[0], RowNum);
+	double* resparts = new double[2];
+	ParallelVVmulCalculation(pPrevProcG, pPrevProcG, parts[1], RowNum);
+	ParallelDVmulCalculation((double)(parts[0] / parts[1]), pPrevProcD, tmpVec, RowNum);
+
+	ParallelVVsubCalculation(tmpVec, pProcG, pProcD, Size, RowNum);
+
+}
+void ParallelThirdIter(double*& pProcRows, double*& pProcG, double*& pProcD, double*& tmpVec,
+	int*& pReceiveNum, int*& pReceiveInd, int*& pSendInd, double& s, int ProcRank, int RowNum, int Size) {
+	double above, resabove;
+	double* pProcDFull = new double[Size];
+	ParallelVVmulCalculation(pProcD, pProcG, above, RowNum);
+	MPI_Allgatherv(pProcD, pReceiveNum[ProcRank], MPI_DOUBLE, pProcDFull,
+		pReceiveNum, pReceiveInd, MPI_DOUBLE, MPI_COMM_WORLD);
+	ParallelMVmulCalculation(pProcRows, pProcDFull, tmpVec, Size, RowNum);
+	double beyond;
+	ParallelVVmulCalculation(pProcD, tmpVec, beyond, RowNum);
+	s = -(double)(above / beyond);
+
+}
+void FourthIter(double*& pProcResult, double*& pPrevProcResult, double*& pProcD, double*& tmpVec,
+	int*& pReceiveNum, int*& pReceiveInd, int*& pSendInd, double& s, int ProcRank, int RowNum, int Size) {
+	ParallelDVmulCalculation(s, pProcD, tmpVec, RowNum);
+	ParallelVVsumCalculation(tmpVec, pPrevProcResult, pProcResult, RowNum);
+
+}
+
+
+void ProcessTermination(double* pMatrixGA, double* pMatrixGR, double* pVectorGA, double* pVectorGR, double* pResultGA,
+	double* pResultGR, double* pResultGRSeq, double* pPrevProcResult, double* pProcResult, double* pPrevResult, double* pPrevProcD,
+	double* pProcD, double* pPrevD, double* pD, double* pPrevProcG, double* pProcG, double* pPrevG, double* pG, int ProcRank) {
+	delete[] pPrevProcResult; delete[] pProcResult; delete[] pPrevResult; delete[] pPrevProcD;
+	delete[] pProcD;  delete[] pPrevProcG; delete[] pProcG;
+	if (ProcRank == 0) {
+		delete[] pMatrixGR; delete[] pMatrixGA; delete[] pVectorGR; delete[] pVectorGA; delete[] pResultGA;
+		delete[] pResultGR;
+		delete[] pD; delete[] pG;
+	}
+}
+void main(int argc, char* argv[]) {
+	setlocale(LC_ALL, "Russian");
+	double* pMatrixGA = 0; double* pMatrixGR = 0;
+	double* pVectorGA = 0; double* pVectorGR = 0;
+	double* pResultGA = 0; double* pResultGR = 0; double* pResultGRSeq = 0;
+	double* pPrevProcResult = 0; double* pProcResult; double* pPrevResult = 0;
+	double* pPrevProcD = 0; double* pProcD = 0; double* pPrevD = 0; double* pD = 0;
+	double* pPrevProcG = 0; double* pProcG = 0;	double* pPrevG = 0; double* pG = 0;
+	int* pSendNum; // Количество отправленных процессу элементов
+	int* pSendInd; // Индекс первого среди них
+	int* pReceiveNum; // Количество элементов, которые будет отправлять данный процесс
+	int* pReceiveInd; // Индекс первого среди них
+	double eps;//Погрешность
+	double* tmpVec = 0;
+	double s;//Значение, вычисляемое на шаге 3 каждой итерации
+	int Size; // Размер матрицы и стобца свободных членов
+	double* pProcRows;//Строки, выделенных данном процессу
+	int RowNum;//Их количество
+	int ProcRank, ProcNum;
+	double Start, Finish, Duration, DurationPar;
+
+	//------ Параллельная версия метода сопряженных градиентов ------//
 	MPI_Init(&argc, &argv);
-	MPI_Status status;
-
-	int rank = -1;
-	int process_num = -1;
-	int pro, con;
-	int size = 0;
-
-	MPI_Comm_rank(MPI_COMM_WORLD, &rank); 
-	MPI_Comm_size(MPI_COMM_WORLD, &process_num); 
-
-	int a = (process_num - 1);
-	pro = a / 2 + a % 2;
-	con = a / 2 ;
-
-	if (rank == 0) { 
-		Manager manager(3, process_num, pro, con);
-		manager.Run(); 
+	MPI_Comm_size(MPI_COMM_WORLD, &ProcNum);
+	MPI_Comm_rank(MPI_COMM_WORLD, &ProcRank);
+	ProcessInitialization(pMatrixGA, pVectorGA, pResultGA, pMatrixGR, pVectorGR, pResultGR, pProcRows, pProcResult, Size, RowNum, ProcRank, ProcNum,
+		pPrevProcResult, pPrevProcD, pProcD, pPrevProcG, pProcG, tmpVec, eps);
+	DataDistribution(pMatrixGR, pProcRows, pVectorGR, pPrevProcResult, pPrevProcD, pPrevProcG, pSendNum, pSendInd, Size, RowNum, ProcRank, ProcNum);
+	ReceiveInfoCalculation(pReceiveNum, pReceiveInd, Size, ProcNum);
+	int flag = 1;
+	Start = MPI_Wtime();
+	while(flag){
+		double sumpogr;
+		double sum = 0;
+		ParallelFirstIter(pProcRows, pVectorGR, pProcG, pPrevProcResult, tmpVec, pReceiveNum, pReceiveInd, pSendInd, ProcRank, RowNum, Size);
+		ParallelSecondIter(pProcG, pPrevProcG, pPrevProcResult, pProcD, pPrevProcD, tmpVec, pReceiveNum, pReceiveInd, pSendInd, ProcRank, RowNum, Size);
+		ParallelThirdIter(pProcRows, pProcG, pProcD, tmpVec, pReceiveNum, pReceiveInd, pSendInd, s, ProcRank, RowNum, Size);
+		FourthIter(pProcResult, pPrevProcResult, pProcD, tmpVec, pReceiveNum, pReceiveInd, pSendInd, s, ProcRank, RowNum, Size);
+		for (int i = 0; i < RowNum; i++)
+			sum += fabs(pProcResult[i] - pPrevProcResult[i]);
+				MPI_Reduce(&sum, &sumpogr,1,MPI_DOUBLE,MPI_SUM,0,MPI_COMM_WORLD);
+				if(ProcRank == 0) 
+					if(sumpogr < eps)
+						flag = 0;
+				MPI_Bcast(&flag, 1, MPI_INT, 0, MPI_COMM_WORLD);
+		delete pPrevProcG; delete pPrevProcD; delete pPrevProcResult;
+		pPrevProcG = pProcG; pPrevProcD = pProcD; pPrevProcResult = pProcResult;
+		pProcG = new double[RowNum]; pProcD = new double[RowNum]; pProcResult = new double[RowNum];
 	}
-	else { 
-		if (rank % 2) { 
-			std::cout << "The process with the rank " << rank << " is Producer" << std::endl;
-			Producer producer(rank, 5);
-			producer.Run();
-		}
-		else { 
-			std::cout << "The process with the rank " << rank << " is Consumer" << std::endl;
-			Consumer consumer(rank, 5); 
-			consumer.Run(); 
-		}
-	}
+	MPI_Gatherv(pPrevProcResult, RowNum, MPI_DOUBLE, pResultGR,
+		pReceiveNum, pReceiveInd, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+	Finish = MPI_Wtime();
+	DurationPar = Finish - Start;
+	//------------------------------------//
+	if (ProcRank == 0) {
+		
+		Start = MPI_Wtime();
+		SerialResultCalculation(pMatrixGA, pVectorGA, pResultGA, Size);
+		Finish = MPI_Wtime();
+		Duration = Finish - Start;
+		cout << "\n\tThe result of the sequential Gauss method:\n";
+		cout << "\tOperating time:" << Duration << " sec.\n";
 
+		ProcessInitializationGradient(pVectorGR, pPrevResult, pResultGRSeq, pPrevD, pD, pPrevG, pG, Size);
+		Start = MPI_Wtime();
+		SoprGradSeq(pMatrixGR, pVectorGR, pPrevResult, pResultGRSeq, pPrevD, pD, pPrevG, pG, s, eps, Size);
+		Finish = MPI_Wtime();
+		Duration = Finish - Start;
+		cout << "\n\tThe result of the sequential conjugate gradient method:\n";
+		
+		cout << "\tOperating time:" << Duration << " sec.\n";
+		//--------------------------------------------------------------------------------------------//
+		cout << "\n\tThe result of the parallel conjugate gradient method:\n";
+		
+		cout << "\tOperating time:" << DurationPar << " sec.\n";
+		bool IsCorrect = 1;
+
+		for (int i = 0; i < Size; i++) {
+			if (abs(pResultGA[i] - pResultGR[i]) > eps) IsCorrect = 0;
+		
+		
+		}
+		if (IsCorrect) cout << "\n\tThe algorithm worked correctly.\n";
+		else cout << "\n\tThere are errors in the algorithm.\n";
+	}
+	ProcessTermination(pMatrixGA, pMatrixGR, pVectorGA, pVectorGR, pResultGA, pResultGR, pResultGRSeq, pPrevProcResult, pProcResult, pPrevResult,
+		pPrevProcD, pProcD, pPrevD, pD, pPrevProcG, pProcG, pPrevG, pG, ProcRank);
 	MPI_Finalize();
-	return 0;
 }
