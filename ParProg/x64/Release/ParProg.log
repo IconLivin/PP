@@ -1,9 +1,5 @@
-﻿  Source.cpp
-C:\Users\aaron\OneDrive\Рабочий стол\PP\ParProg\Source.cpp(185,12): warning C4244: аргумент: преобразование "time_t" в "unsigned int", возможна потеря данных
-C:\Users\aaron\OneDrive\Рабочий стол\PP\ParProg\Source.cpp(345,16): warning C4101: resabove: неиспользованная локальная переменная
-C:\Users\aaron\OneDrive\Рабочий стол\PP\ParProg\Source.cpp(375,35): warning C4326: возвращаемый тип "main" должен быть "int", а не "void"
-  Создание кода
-  2 of 39 functions ( 5.1%) were compiled, the rest were copied from previous compilation.
+﻿  Создание кода
+  1 of 39 functions ( 2.6%) were compiled, the rest were copied from previous compilation.
     0 functions were new in current compilation
     0 functions had inline decision re-evaluated but remain unchanged
   Создание кода завершено

@@ -412,11 +412,13 @@ void main(int argc, char* argv[]) {
 		FourthIter(pProcResult, pPrevProcResult, pProcD, tmpVec, pReceiveNum, pReceiveInd, pSendInd, s, ProcRank, RowNum, Size);
 		for (int i = 0; i < RowNum; i++)
 			sum += fabs(pProcResult[i] - pPrevProcResult[i]);
-				MPI_Reduce(&sum, &sumpogr,1,MPI_DOUBLE,MPI_SUM,0,MPI_COMM_WORLD);
-				if(ProcRank == 0) 
-					if(sumpogr < eps)
-						flag = 0;
-				MPI_Bcast(&flag, 1, MPI_INT, 0, MPI_COMM_WORLD);
+		MPI_Reduce(&sum, &sumpogr,1,MPI_DOUBLE,MPI_SUM,0,MPI_COMM_WORLD);
+		if (ProcRank == 0) {
+			if (sumpogr < eps) {
+				flag = 0;
+			}
+		}
+		MPI_Bcast(&flag, 1, MPI_INT, 0, MPI_COMM_WORLD);
 		delete pPrevProcG; delete pPrevProcD; delete pPrevProcResult;
 		pPrevProcG = pProcG; pPrevProcD = pProcD; pPrevProcResult = pProcResult;
 		pProcG = new double[RowNum]; pProcD = new double[RowNum]; pProcResult = new double[RowNum];
@@ -450,9 +452,8 @@ void main(int argc, char* argv[]) {
 		bool IsCorrect = 1;
 
 		for (int i = 0; i < Size; i++) {
-			if (abs(pResultGA[i] - pResultGR[i]) > eps) IsCorrect = 0;
-		
-		
+			if (abs(pResultGA[i] - pResultGR[i]) > eps)
+				IsCorrect = 0;
 		}
 		if (IsCorrect) cout << "\n\tThe algorithm worked correctly.\n";
 		else cout << "\n\tThere are errors in the algorithm.\n";
